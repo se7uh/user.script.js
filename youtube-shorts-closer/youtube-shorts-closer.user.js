@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Shorts Auto Closer
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Automatically closes YouTube Shorts pages after daily limit
 // @author       se7
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=youtube.com
@@ -24,6 +24,7 @@
     let timerDisplay;
     let currentShortsId = '';
     let timeTrackingInterval;
+    let isPageVisible = true;
 
     // Storage keys
     const STORAGE_KEYS = {
@@ -56,6 +57,9 @@
 
     // Update daily time spent
     const updateDailyTime = () => {
+        // Only update time if page is visible
+        if (!isPageVisible) return;
+        
         checkAndResetDaily();
         const currentTime = GM_getValue(STORAGE_KEYS.dailyTime, 0);
         GM_setValue(STORAGE_KEYS.dailyTime, currentTime + 1);
@@ -212,6 +216,9 @@
             const countdownElement = warning.querySelector('.countdown');
             
             countdownInterval = setInterval(() => {
+                // Only update countdown if page is visible
+                if (!isPageVisible) return;
+                
                 countdown--;
                 if (countdownElement) {
                     countdownElement.textContent = countdown.toString();
@@ -264,8 +271,22 @@
         updateTimerDisplay(remainingTime);
     };
 
+    // Handle visibility changes
+    const handleVisibilityChange = () => {
+        isPageVisible = document.visibilityState === 'visible';
+        
+        // Update timer display with visibility status
+        if (timerDisplay) {
+            timerDisplay.style.opacity = isPageVisible ? '1' : '0.5';
+        }
+    };
+
+    // Set up visibility change listener
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     // Start initial timers and set initial shorts ID
     currentShortsId = getShortsIdFromUrl(window.location.href);
+    isPageVisible = document.visibilityState === 'visible';
     startTimers();
 
     // Reset timers when URL changes (for SPA navigation)
