@@ -1,17 +1,16 @@
 // ==UserScript==
 // @name         YouTube Link Saver
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Save YouTube links with persistent storage
 // @author       se7
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=youtube.com
 // @match        https://www.youtube.com/*
-// @match        https://youtu.be/*
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @run-at       document-end
-// @license MIT
+// @license      MIT
 // ==/UserScript==
 
 (function() {
@@ -228,17 +227,20 @@
             position: relative !important;
         }
 
-        /* Remove badge styles and keep only color styles */
+        /* Saved video title highlighting - more specific selectors */
         /* Watch page title */
-        ytd-watch-metadata h1.yt-saved-video yt-formatted-string {
+        ytd-watch-metadata h1.yt-saved-video yt-formatted-string,
+        ytd-watch-metadata h1.yt-saved-video {
             color: #2ba640 !important;
         }
 
         /* Search/browse page title */
-        #video-title.yt-saved-video,
-        #video-title-link.yt-saved-video,
-        #video-title-link.yt-saved-video yt-formatted-string,
-        span#video-title.yt-saved-video {
+        a#video-title.yt-saved-video,
+        a#video-title-link.yt-saved-video,
+        a#video-title-link.yt-saved-video yt-formatted-string,
+        span#video-title.yt-saved-video,
+        h3 a#video-title.yt-saved-video,
+        h3 a#video-title-link.yt-saved-video {
             color: #2ba640 !important;
         }
 
@@ -250,7 +252,13 @@
 
         /* New lockup view model title */
         .yt-lockup-metadata-view-model-wiz__title.yt-saved-video,
-        .yt-lockup-metadata-view-model-wiz__title.yt-saved-video span.yt-core-attributed-string {
+        .yt-lockup-metadata-view-model-wiz__title.yt-saved-video span.yt-core-attributed-string,
+        .yt-lockup-metadata-view-model-wiz__title.yt-saved-video * {
+            color: #2ba640 !important;
+        }
+
+        /* Force override any other color styles */
+        .yt-saved-video {
             color: #2ba640 !important;
         }
 
@@ -531,17 +539,35 @@
         }
     `);
 
+    // Optimized debounce with cancel support for memory leak prevention
+    function debounce(func, wait) {
+        let timeout;
+        const executedFunction = function(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                timeout = null;
+                func.apply(this, args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+
+        // Add cancel method to clear pending timeouts
+        executedFunction.cancel = function() {
+            clearTimeout(timeout);
+            timeout = null;
+        };
+
+        return executedFunction;
+    }
+
     // Storage functions
     function getSavedLinks() {
         const links = localStorage.getItem('ytSavedLinks');
         return links ? JSON.parse(links) : [];
     }
 
-    function isLinkSaved(url) {
-        const links = getSavedLinks();
-        const videoId = getVideoIdFromUrl(url);
-        return links.some(link => getVideoIdFromUrl(link.url) === videoId);
-    }
+
 
     function showNotification(message, type = 'success') {
         const notification = document.createElement('div');
@@ -598,108 +624,214 @@
     }
 
     function checkAndHighlightTitles() {
-        const savedLinks = getSavedLinks();
-        const savedVideoIds = savedLinks.map(link => getVideoIdFromUrl(link.url));
+        // Use cached saved video IDs for better performance
+        const savedVideoIds = getCachedSavedVideoIds();
 
         // Check watch page title
         const watchTitle = document.querySelector('ytd-watch-metadata h1');
         if (watchTitle) {
             const currentVideoId = getVideoIdFromUrl(window.location.href);
-            if (savedVideoIds.includes(currentVideoId)) {
+            if (savedVideoIds.has(currentVideoId)) {
                 watchTitle.classList.add('yt-saved-video');
             } else {
                 watchTitle.classList.remove('yt-saved-video');
             }
         }
 
-        // Check all possible video title elements
-        const titleSelectors = [
-            'a#video-title',                              // Search/browse view
-            'a#video-title-link',                         // Grid view
-            'h3 a#video-title-link',                      // Alternative grid view
-            'ytd-rich-grid-media #video-title-link',      // Home page grid
-            'span#video-title',                           // Compact view
-            'ytd-playlist-panel-video-renderer span#video-title',  // Playlist panel
-            '.yt-lockup-metadata-view-model-wiz__title'   // New lockup view
-        ];
+        // Optimized DOM queries - use single combined selector for better performance
+        const combinedSelector = 'a#video-title, a#video-title-link, span#video-title, .yt-lockup-metadata-view-model-wiz__title';
+        const videoTitles = document.querySelectorAll(combinedSelector);
 
-        titleSelectors.forEach(selector => {
-            const videoTitles = document.querySelectorAll(selector);
-            videoTitles.forEach(title => {
-                let videoId;
-                let parentH3;
-                
-                if (title.closest('ytd-playlist-panel-video-renderer')) {
-                    // For playlist panel, get video ID from parent link
-                    const parentLink = title.closest('a#wc-endpoint');
-                    if (parentLink && parentLink.href) {
-                        videoId = getVideoIdFromUrl(parentLink.href);
-                    }
-                    parentH3 = title.closest('h4');
-                } else if (title.tagName.toLowerCase() === 'span') {
-                    // For compact view, get video ID from parent renderer
-                    parentH3 = title.closest('h3');
-                    const renderer = title.closest('ytd-compact-video-renderer');
-                    if (renderer) {
-                        const data = renderer.data || {};
-                        videoId = data.videoId;
-                        if (!videoId) {
-                            const navigationEndpoint = renderer.data?.navigationEndpoint?.watchEndpoint;
-                            videoId = navigationEndpoint?.videoId;
-                            if (!videoId) {
-                                // Try getting from parent link
-                                const parentLink = title.closest('a');
-                                if (parentLink && parentLink.href) {
-                                    videoId = getVideoIdFromUrl(parentLink.href);
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    videoId = getVideoIdFromUrl(title.href);
-                }
+        // Process titles in batches to avoid blocking the main thread
+        const batchSize = 50;
+        let currentIndex = 0;
 
-                if (savedVideoIds.includes(videoId)) {
-                    // Add yt-saved-video class to parent h3/h4 and title span
-                    if (parentH3) {
-                        parentH3.classList.add('yt-saved-video');
-                        title.classList.add('yt-saved-video');
-                        // Add color to span without the badge class
-                        title.style.color = '#2ba640';
-                    } else {
-                        title.classList.add('yt-saved-video');
-                    }
-                    // Also highlight the formatted string inside if it exists
-                    const formattedString = title.querySelector('yt-formatted-string');
-                    if (formattedString) {
-                        formattedString.style.color = '#2ba640';
-                    }
+        function processBatch() {
+            const endIndex = Math.min(currentIndex + batchSize, videoTitles.length);
+
+            for (let i = currentIndex; i < endIndex; i++) {
+                const title = videoTitles[i];
+                if (!title.href) continue;
+
+                let videoId = getVideoIdFromUrl(title.href);
+
+                if (savedVideoIds.has(videoId)) {
+                    title.classList.add('yt-saved-video');
+                    title.style.setProperty('color', '#2ba640', 'important');
                 } else {
-                    if (parentH3) {
-                        parentH3.classList.remove('yt-saved-video');
-                        title.classList.remove('yt-saved-video');
-                        title.style.color = '';
-                    } else {
-                        title.classList.remove('yt-saved-video');
-                    }
-                    const formattedString = title.querySelector('yt-formatted-string');
-                    if (formattedString) {
-                        formattedString.style.color = '';
-                    }
+                    title.classList.remove('yt-saved-video');
+                    title.style.removeProperty('color');
                 }
-            });
+            }
+
+            currentIndex = endIndex;
+
+            // Continue processing if there are more titles
+            if (currentIndex < videoTitles.length) {
+                requestAnimationFrame(processBatch);
+            }
+        }
+
+        // Start processing if there are titles to process
+        if (videoTitles.length > 0) {
+            processBatch();
+        }
+    }
+
+
+
+    // Performance optimized variables
+    let currentUrl = window.location.href;
+    let savedVideoIdsCache = null;
+    let cacheTimestamp = 0;
+    const CACHE_DURATION = 5000; // 5 seconds cache
+
+    // Optimized function to get cached saved video IDs
+    function getCachedSavedVideoIds() {
+        const now = Date.now();
+        if (!savedVideoIdsCache || (now - cacheTimestamp) > CACHE_DURATION) {
+            const savedLinks = getSavedLinks();
+            savedVideoIdsCache = new Set(savedLinks.map(link => getVideoIdFromUrl(link.url)));
+            cacheTimestamp = now;
+        }
+        return savedVideoIdsCache;
+    }
+
+    // Invalidate cache when videos are added/removed
+    function invalidateCache() {
+        savedVideoIdsCache = null;
+        cacheTimestamp = 0;
+    }
+
+    // Optimized debounced function with longer delay for better performance
+    const debouncedCheckAndHighlightTitles = debounce(checkAndHighlightTitles, 1500);
+
+    // Intersection Observer for lazy loading - only process visible elements
+    const intersectionObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const element = entry.target;
+                // Process this specific element
+                processVideoElement(element);
+                // Stop observing this element once processed
+                intersectionObserver.unobserve(element);
+            }
+        });
+    }, {
+        threshold: 0.1,
+        rootMargin: '50px' // Start processing 50px before element becomes visible
+    });
+
+    // Function to process individual video elements
+    function processVideoElement(container) {
+        const savedVideoIds = getCachedSavedVideoIds();
+        const videoTitles = container.querySelectorAll('a#video-title, a#video-title-link, span#video-title, .yt-lockup-metadata-view-model-wiz__title');
+
+        videoTitles.forEach(title => {
+            if (!title.href) return;
+
+            let videoId = getVideoIdFromUrl(title.href);
+
+            if (savedVideoIds.has(videoId)) {
+                title.classList.add('yt-saved-video');
+                title.style.setProperty('color', '#2ba640', 'important');
+            } else {
+                title.classList.remove('yt-saved-video');
+                title.style.removeProperty('color');
+            }
         });
     }
 
-    // Create mutation observer to watch for new video elements
+    // Single optimized mutation observer for both DOM changes and URL changes
     const observer = new MutationObserver((mutations) => {
-        checkAndHighlightTitles();
+        let shouldUpdate = false;
+        let urlChanged = false;
+
+        // Check for URL changes first (most efficient)
+        if (window.location.href !== currentUrl) {
+            currentUrl = window.location.href;
+            urlChanged = true;
+            shouldUpdate = true;
+        }
+
+        // Only check DOM mutations if URL didn't change (avoid redundant work)
+        if (!urlChanged) {
+            for (let mutation of mutations) {
+                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                    // More efficient check - only look for specific parent containers
+                    for (let node of mutation.addedNodes) {
+                        if (node.nodeType === 1 && node.tagName && (
+                            node.tagName.startsWith('YTD-') ||
+                            node.id === 'contents' ||
+                            node.classList?.contains('ytd-rich-grid-renderer') ||
+                            node.classList?.contains('ytd-item-section-renderer')
+                        )) {
+                            // Add new video containers to intersection observer for lazy loading
+                            const videoContainers = node.querySelectorAll('ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer');
+                            videoContainers.forEach(container => {
+                                intersectionObserver.observe(container);
+                            });
+                            shouldUpdate = true;
+                            break;
+                        }
+                    }
+                    if (shouldUpdate) break;
+                }
+            }
+        }
+
+        if (shouldUpdate) {
+            debouncedCheckAndHighlightTitles();
+        }
     });
 
-    // Start observing
+    // Start observing with throttled options
     observer.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
+        attributes: false, // Disable attribute watching
+        characterData: false // Disable text changes
+    });
+
+    // Comprehensive cleanup on page unload to prevent memory leaks
+    function cleanup() {
+        observer.disconnect();
+        intersectionObserver.disconnect();
+        // Clear cache
+        savedVideoIdsCache = null;
+        // Remove any pending timeouts
+        if (debouncedCheckAndHighlightTitles.cancel) {
+            debouncedCheckAndHighlightTitles.cancel();
+        }
+    }
+
+    window.addEventListener('beforeunload', cleanup);
+    window.addEventListener('pagehide', cleanup); // For mobile browsers
+
+    // Pause observers when tab is not visible for better performance
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            observer.disconnect();
+            intersectionObserver.disconnect();
+            // Cancel any pending debounced calls
+            if (debouncedCheckAndHighlightTitles.cancel) {
+                debouncedCheckAndHighlightTitles.cancel();
+            }
+        } else {
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: false,
+                characterData: false
+            });
+            // Re-observe existing video containers
+            const videoContainers = document.querySelectorAll('ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer');
+            videoContainers.forEach(container => {
+                intersectionObserver.observe(container);
+            });
+            // Trigger update when tab becomes visible
+            setTimeout(() => checkAndHighlightTitles(), 300);
+        }
     });
 
     // Modify saveLink function to validate video ID
@@ -718,20 +850,24 @@
         if (existingIndex !== -1) {
             links.splice(existingIndex, 1);
             localStorage.setItem('ytSavedLinks', JSON.stringify(links));
+            invalidateCache(); // Invalidate cache when data changes
             updateLinksList();
             updateVideoCount();
             showNotification('Video removed from saved list');
-            checkAndHighlightTitles();
+            // Force immediate color update
+            setTimeout(() => checkAndHighlightTitles(), 100);
             return true;
         }
 
         // If video doesn't exist, add it
         links.push({ url, title, date: new Date().toISOString() });
         localStorage.setItem('ytSavedLinks', JSON.stringify(links));
+        invalidateCache(); // Invalidate cache when data changes
         updateLinksList();
         updateVideoCount();
         showNotification('Video saved successfully');
-        checkAndHighlightTitles();
+        // Force immediate color update
+        setTimeout(() => checkAndHighlightTitles(), 100);
         return true;
     }
 
@@ -740,10 +876,12 @@
         const links = getSavedLinks();
         links.splice(index, 1);
         localStorage.setItem('ytSavedLinks', JSON.stringify(links));
+        invalidateCache(); // Invalidate cache when data changes
         updateLinksList();
         updateVideoCount();
         showNotification('Video deleted successfully');
-        checkAndHighlightTitles();
+        // Force immediate color update
+        setTimeout(() => checkAndHighlightTitles(), 100);
     }
 
     // Modify handleSave function to handle toggle
@@ -798,6 +936,8 @@
         document.body.classList.add('yt-selecting-video');
         saveButton.classList.add('selecting');
         showNotification('Click any video to save it', 'info');
+        // Refresh colors when entering selection mode
+        checkAndHighlightTitles();
     }
 
     // Function to exit video selection mode
@@ -805,6 +945,8 @@
         isSelectingVideo = false;
         document.body.classList.remove('yt-selecting-video');
         saveButton.classList.remove('selecting');
+        // Refresh colors when exiting selection mode
+        checkAndHighlightTitles();
     }
 
     // Handle video click in selection mode
@@ -1045,7 +1187,8 @@
         if (linksList.classList.contains('visible')) {
             updateLinksList();
             updateVideoCount();
-            checkAndHighlightTitles();
+            // Force color update when opening list
+            setTimeout(() => checkAndHighlightTitles(), 100);
         }
     }
 
@@ -1100,6 +1243,7 @@
                 
                 // Save merged links
                 localStorage.setItem('ytSavedLinks', JSON.stringify(currentLinks));
+                invalidateCache(); // Invalidate cache when data changes
                 updateLinksList();
                 updateVideoCount();
                 checkAndHighlightTitles();
@@ -1117,8 +1261,6 @@
 
     // Update links list with search functionality
     function updateLinksList(searchQuery = '') {
-        const links = getSavedLinks();
-        
         // Only create header and search if they don't exist
         if (!linksList.querySelector('.saved-links-header')) {
             // Add title
@@ -1267,7 +1409,7 @@
             return;
         }
         
-        filteredLinks.forEach((link, index) => {
+        filteredLinks.forEach((link) => {
             const linkElement = document.createElement('div');
             linkElement.className = 'saved-link';
             
@@ -1367,10 +1509,11 @@
         confirmBtn.textContent = 'Yes, Delete All';
         confirmBtn.onclick = () => {
             localStorage.setItem('ytSavedLinks', '[]');
+            invalidateCache(); // Invalidate cache when all data is deleted
             updateLinksList();
             updateVideoCount();
             showNotification('All videos have been deleted');
-            checkAndHighlightTitles();
+            checkAndHighlightTitles(); // Use optimized function instead
             document.body.removeChild(overlay);
             document.body.removeChild(dialog);
         };
@@ -1395,10 +1538,4 @@
             container.classList.add('collapsed');
         }
     });
-
-    // Initial highlight check
-    //setTimeout(checkAndHighlightTitles, 1000);
-
-    // Periodic check for new videos (every 2 seconds)
-    // setInterval(checkAndHighlightTitles, 2000);
 })(); 
