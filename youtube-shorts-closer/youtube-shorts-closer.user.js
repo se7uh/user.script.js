@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         YouTube Shorts Auto Closer
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  Automatically closes YouTube Shorts pages after daily limit
 // @author       se7
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=youtube.com
-// @match        https://www.youtube.com/shorts/*
+// @match        https://www.youtube.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @run-at       document-end
@@ -16,15 +16,15 @@
     'use strict';
 
     const DAILY_LIMIT_MINUTES = 40;
-    const WARNING_BEFORE_CLOSE = 10; // Show warning 10 seconds before closing
-    let closeTimer;
-    let warningTimer;
-    let warningShown = false;
-    let countdownInterval;
-    let timerDisplay;
-    let currentShortsId = '';
-    let timeTrackingInterval;
+    const WARNING_BEFORE_CLOSE_SECONDS = 10;
+    let timeTrackingInterval = null;
+    let countdownInterval = null;
     let isPageVisible = true;
+    let isScriptActive = true;
+    let uiElements = {
+        timer: null,
+        warning: null
+    };
 
     // Storage keys
     const STORAGE_KEYS = {
@@ -33,9 +33,7 @@
     };
 
     // Get today's date in YYYY-MM-DD format
-    const getTodayDate = () => {
-        return new Date().toISOString().split('T')[0];
-    };
+    const getTodayDate = () => new Date().toISOString().split('T')[0];
 
     // Reset daily time if it's a new day
     const checkAndResetDaily = () => {
@@ -55,31 +53,38 @@
         return Math.max(0, DAILY_LIMIT_MINUTES * 60 - timeSpentToday);
     };
 
-    // Update daily time spent
-    const updateDailyTime = () => {
-        // Only update time if page is visible
-        if (!isPageVisible) return;
-        
-        checkAndResetDaily();
-        const currentTime = GM_getValue(STORAGE_KEYS.dailyTime, 0);
-        GM_setValue(STORAGE_KEYS.dailyTime, currentTime + 1);
-        
+    // Main function to run every second
+    const tick = () => {
+        if (!isPageVisible || !isScriptActive) return;
+
         const remainingTime = getRemainingDailyTime();
-        updateTimerDisplay(remainingTime);
-        
-        // Check if we've reached the limit
-        if (remainingTime <= WARNING_BEFORE_CLOSE && !warningShown) {
-            showWarning();
-        }
-        
+
         if (remainingTime <= 0) {
+            cleanup();
             window.close();
+            return;
+        }
+
+        const newTimeSpent = GM_getValue(STORAGE_KEYS.dailyTime, 0) + 1;
+        GM_setValue(STORAGE_KEYS.dailyTime, newTimeSpent);
+
+        updateTimerDisplay(remainingTime - 1);
+
+        if (remainingTime <= WARNING_BEFORE_CLOSE_SECONDS && !uiElements.warning) {
+            showWarning(remainingTime - 1);
         }
     };
 
     // Create timer display
     const createTimerDisplay = () => {
+        // Remove existing timer if any
+        const existingTimer = document.getElementById('shorts-closer-timer');
+        if (existingTimer) {
+            existingTimer.remove();
+        }
+
         const timer = document.createElement('div');
+        timer.id = 'shorts-closer-timer';
         timer.style.cssText = `
             position: fixed;
             bottom: 80px;
@@ -96,6 +101,7 @@
             gap: 8px;
             backdrop-filter: blur(5px);
             border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: opacity 0.3s;
         `;
 
         // Create SVG element
@@ -118,18 +124,27 @@
         span.textContent = 'Daily time left: ';
         
         const strong = document.createElement('strong');
+        strong.id = 'shorts-closer-time';
         strong.textContent = '00:00';
         
         span.appendChild(strong);
         timer.appendChild(svg);
         timer.appendChild(span);
 
+        document.body.appendChild(timer);
         return timer;
     };
 
     // Create warning notification element
     const createWarning = () => {
+        // Remove existing warning if any
+        const existingWarning = document.getElementById('shorts-closer-warning');
+        if (existingWarning) {
+            existingWarning.remove();
+        }
+
         const warning = document.createElement('div');
+        warning.id = 'shorts-closer-warning';
         warning.style.cssText = `
             position: fixed;
             bottom: 140px;
@@ -163,8 +178,8 @@
         const countdownText = document.createElement('span');
         countdownText.textContent = 'Closing in: ';
         const countdownSpan = document.createElement('span');
-        countdownSpan.className = 'countdown';
-        countdownSpan.textContent = '10';
+        countdownSpan.id = 'shorts-closer-countdown';
+        countdownSpan.textContent = WARNING_BEFORE_CLOSE_SECONDS.toString();
         const secondsText = document.createElement('span');
         secondsText.textContent = ' seconds';
 
@@ -178,23 +193,22 @@
         warning.appendChild(warningIcon);
         warning.appendChild(contentDiv);
 
+        document.body.appendChild(warning);
         return warning;
     };
 
     // Update timer display
     const updateTimerDisplay = (remainingTime) => {
-        if (!timerDisplay) return;
+        if (!uiElements.timer) return;
         
         const minutes = Math.floor(remainingTime / 60);
         const seconds = remainingTime % 60;
-        // Format as MM:SS
         const timeString = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
         
-        const strongElement = timerDisplay.querySelector('strong');
+        const strongElement = uiElements.timer.querySelector('#shorts-closer-time');
         if (strongElement) {
             strongElement.textContent = timeString;
             
-            // Change color based on remaining time
             if (minutes < 5) {
                 strongElement.style.color = '#ff4444';
             } else if (minutes < 10) {
@@ -206,106 +220,114 @@
     };
 
     // Function to show warning with countdown
-    const showWarning = () => {
-        if (!warningShown) {
-            const warning = createWarning();
-            document.body.appendChild(warning);
-            warningShown = true;
+    const showWarning = (initialCountdown) => {
+        if (uiElements.warning) return;
 
-            let countdown = WARNING_BEFORE_CLOSE;
-            const countdownElement = warning.querySelector('.countdown');
-            
-            countdownInterval = setInterval(() => {
-                // Only update countdown if page is visible
-                if (!isPageVisible) return;
-                
-                countdown--;
-                if (countdownElement) {
-                    countdownElement.textContent = countdown.toString();
-                }
-                if (countdown <= 0) {
-                    clearInterval(countdownInterval);
-                }
-            }, 1000);
+        uiElements.warning = createWarning();
+        
+        let countdown = initialCountdown;
+        const countdownElement = uiElements.warning.querySelector('#shorts-closer-countdown');
+        if (countdownElement) {
+            countdownElement.textContent = countdown.toString();
+        }
+
+        countdownInterval = setInterval(() => {
+            if (!isPageVisible || !isScriptActive) return;
+
+            countdown--;
+            if (countdownElement) {
+                countdownElement.textContent = Math.max(0, countdown).toString();
+            }
+            if (countdown <= 0) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+            }
+        }, 1000);
+    };
+    
+    const stopTimersAndRemoveUI = () => {
+        if (timeTrackingInterval) {
+            clearInterval(timeTrackingInterval);
+            timeTrackingInterval = null;
+        }
+        if (countdownInterval) {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
+        }
+
+        if (uiElements.timer && uiElements.timer.parentNode) {
+            uiElements.timer.remove();
+            uiElements.timer = null;
+        }
+        if (uiElements.warning && uiElements.warning.parentNode) {
+            uiElements.warning.remove();
+            uiElements.warning = null;
         }
     };
 
-    // Function to get shorts ID from URL
-    const getShortsIdFromUrl = (url) => {
-        const match = url.match(/\/shorts\/([^/?]+)/);
-        return match ? match[1] : null;
-    };
-
-    // Function to start timers
     const startTimers = () => {
-        // Clear any existing timers
-        if (closeTimer) clearTimeout(closeTimer);
-        if (warningTimer) clearTimeout(warningTimer);
-        if (countdownInterval) clearInterval(countdownInterval);
-        if (timeTrackingInterval) clearInterval(timeTrackingInterval);
-        warningShown = false;
+        // Prevent multiple intervals
+        if (timeTrackingInterval) return;
 
-        // Check remaining daily time
+        // Initial check
         const remainingTime = getRemainingDailyTime();
         if (remainingTime <= 0) {
+            cleanup();
             window.close();
             return;
         }
 
-        // Remove any existing warnings
-        const existingWarning = document.querySelector('.shorts-warning');
-        if (existingWarning) {
-            existingWarning.remove();
+        // Create UI
+        if (!uiElements.timer) {
+            uiElements.timer = createTimerDisplay();
         }
-
-        // Create or update timer display
-        if (!timerDisplay) {
-            timerDisplay = createTimerDisplay();
-            document.body.appendChild(timerDisplay);
-        }
-
-        // Start time tracking
-        timeTrackingInterval = setInterval(updateDailyTime, 1000);
-
-        // Initial timer display update
         updateTimerDisplay(remainingTime);
+
+        // Start the main tick interval
+        timeTrackingInterval = setInterval(tick, 1000);
+    };
+
+    // Comprehensive cleanup function
+    const cleanup = () => {
+        isScriptActive = false;
+        stopTimersAndRemoveUI();
+
+        // Remove event listeners
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        document.removeEventListener('yt-navigate-finish', handlePageNavigation);
     };
 
     // Handle visibility changes
     const handleVisibilityChange = () => {
+        if (!isScriptActive) return;
         isPageVisible = document.visibilityState === 'visible';
-        
-        // Update timer display with visibility status
-        if (timerDisplay) {
-            timerDisplay.style.opacity = isPageVisible ? '1' : '0.5';
+
+        if (uiElements.timer) {
+            uiElements.timer.style.opacity = isPageVisible ? '1' : '0.5';
+        }
+    };
+    
+    const handlePageNavigation = () => {
+        if (!isScriptActive) return;
+
+        const isOnShortsPage = window.location.pathname.startsWith('/shorts/');
+
+        if (isOnShortsPage) {
+            startTimers();
+        } else {
+            stopTimersAndRemoveUI();
         }
     };
 
-    // Set up visibility change listener
+    // Set up event listeners
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('yt-navigate-finish', handlePageNavigation);
 
-    // Start initial timers and set initial shorts ID
-    currentShortsId = getShortsIdFromUrl(window.location.href);
-    isPageVisible = document.visibilityState === 'visible';
-    startTimers();
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', cleanup);
+    window.addEventListener('unload', cleanup);
 
-    // Reset timers when URL changes (for SPA navigation)
-    const observer = new MutationObserver(() => {
-        const newShortsId = getShortsIdFromUrl(window.location.href);
-        // Only reset if we've completely left shorts and come back
-        if (!window.location.href.includes('/shorts/')) {
-            currentShortsId = null;
-            if (timeTrackingInterval) clearInterval(timeTrackingInterval);
-        } else if (currentShortsId === null && newShortsId) {
-            currentShortsId = newShortsId;
-            startTimers();
-        }
-    });
+    // Initial check when the script runs
+    handlePageNavigation();
 
-    // Observe URL changes
-    observer.observe(document.querySelector('title'), {
-        subtree: true,
-        characterData: true,
-        childList: true
-    });
 })(); 
