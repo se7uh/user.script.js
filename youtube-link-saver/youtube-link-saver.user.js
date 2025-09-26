@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Link Saver
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  Save YouTube links with persistent storage
 // @author       se7
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=youtube.com
@@ -251,6 +251,9 @@
         }
 
         /* New lockup view model title */
+        a.yt-lockup-metadata-view-model__title.yt-saved-video,
+        a.yt-lockup-metadata-view-model__title.yt-saved-video span.yt-core-attributed-string,
+        a.yt-lockup-metadata-view-model__title.yt-saved-video *,
         .yt-lockup-metadata-view-model-wiz__title.yt-saved-video,
         .yt-lockup-metadata-view-model-wiz__title.yt-saved-video span.yt-core-attributed-string,
         .yt-lockup-metadata-view-model-wiz__title.yt-saved-video * {
@@ -528,7 +531,9 @@
         body.yt-selecting-video ytd-rich-item-renderer:hover,
         body.yt-selecting-video ytd-video-renderer:hover,
         body.yt-selecting-video ytd-grid-video-renderer:hover,
-        body.yt-selecting-video ytd-compact-video-renderer:hover {
+        body.yt-selecting-video ytd-compact-video-renderer:hover,
+        body.yt-selecting-video yt-lockup-view-model:hover,
+        body.yt-selecting-video .yt-lockup-view-model:hover {
             outline: 2px solid #2ba640 !important;
             outline-offset: 4px !important;
         }
@@ -623,6 +628,40 @@
         }
     }
 
+    function applySavedStyles(elements, isSaved) {
+        const uniqueElements = new Set(elements.filter(Boolean));
+
+        uniqueElements.forEach(element => {
+            if (!(element instanceof Element)) return;
+
+            if (isSaved) {
+                element.classList.add('yt-saved-video');
+                element.style.setProperty('color', '#2ba640', 'important');
+            } else {
+                element.classList.remove('yt-saved-video');
+                element.style.removeProperty('color');
+            }
+        });
+    }
+
+    function normalizeYoutubeUrl(href) {
+        if (!href) return null;
+
+        if (href.startsWith('http://') || href.startsWith('https://')) {
+            return href;
+        }
+
+        if (href.startsWith('//')) {
+            return `${window.location.protocol}${href}`;
+        }
+
+        const normalizedPath = href.startsWith('/') ? href : `/${href}`;
+        return `https://www.youtube.com${normalizedPath}`;
+    }
+
+    const TITLE_SELECTOR = 'a#video-title, a#video-title-link, span#video-title, .yt-lockup-metadata-view-model-wiz__title, a.yt-lockup-metadata-view-model__title';
+    const VIDEO_CONTAINER_SELECTOR = 'ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, yt-lockup-view-model';
+
     function checkAndHighlightTitles() {
         // Use cached saved video IDs for better performance
         const savedVideoIds = getCachedSavedVideoIds();
@@ -639,8 +678,7 @@
         }
 
         // Optimized DOM queries - use single combined selector for better performance
-        const combinedSelector = 'a#video-title, a#video-title-link, span#video-title, .yt-lockup-metadata-view-model-wiz__title';
-        const videoTitles = document.querySelectorAll(combinedSelector);
+        const videoTitles = document.querySelectorAll(TITLE_SELECTOR);
 
         // Process titles in batches to avoid blocking the main thread
         const batchSize = 50;
@@ -651,17 +689,16 @@
 
             for (let i = currentIndex; i < endIndex; i++) {
                 const title = videoTitles[i];
-                if (!title.href) continue;
+                const anchor = title.tagName === 'A' ? title : title.closest('a');
+                if (!anchor || !anchor.href) continue;
 
-                let videoId = getVideoIdFromUrl(title.href);
+                const videoId = getVideoIdFromUrl(anchor.href);
+                if (!videoId) continue;
 
-                if (savedVideoIds.has(videoId)) {
-                    title.classList.add('yt-saved-video');
-                    title.style.setProperty('color', '#2ba640', 'important');
-                } else {
-                    title.classList.remove('yt-saved-video');
-                    title.style.removeProperty('color');
-                }
+                const isSaved = savedVideoIds.has(videoId);
+                const textElement = anchor.querySelector('.yt-core-attributed-string');
+
+                applySavedStyles([anchor, title === anchor ? null : title, textElement], isSaved);
             }
 
             currentIndex = endIndex;
@@ -725,20 +762,19 @@
     // Function to process individual video elements
     function processVideoElement(container) {
         const savedVideoIds = getCachedSavedVideoIds();
-        const videoTitles = container.querySelectorAll('a#video-title, a#video-title-link, span#video-title, .yt-lockup-metadata-view-model-wiz__title');
+        const videoTitles = container.querySelectorAll(TITLE_SELECTOR);
 
         videoTitles.forEach(title => {
-            if (!title.href) return;
+            const anchor = title.tagName === 'A' ? title : title.closest('a');
+            if (!anchor || !anchor.href) return;
 
-            let videoId = getVideoIdFromUrl(title.href);
+            const videoId = getVideoIdFromUrl(anchor.href);
+            if (!videoId) return;
 
-            if (savedVideoIds.has(videoId)) {
-                title.classList.add('yt-saved-video');
-                title.style.setProperty('color', '#2ba640', 'important');
-            } else {
-                title.classList.remove('yt-saved-video');
-                title.style.removeProperty('color');
-            }
+            const isSaved = savedVideoIds.has(videoId);
+            const textElement = anchor.querySelector('.yt-core-attributed-string');
+
+            applySavedStyles([anchor, title === anchor ? null : title, textElement], isSaved);
         });
     }
 
@@ -767,7 +803,11 @@
                             node.classList?.contains('ytd-item-section-renderer')
                         )) {
                             // Add new video containers to intersection observer for lazy loading
-                            const videoContainers = node.querySelectorAll('ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer');
+                            if (node.matches?.(VIDEO_CONTAINER_SELECTOR)) {
+                                intersectionObserver.observe(node);
+                            }
+
+                            const videoContainers = node.querySelectorAll(VIDEO_CONTAINER_SELECTOR);
                             videoContainers.forEach(container => {
                                 intersectionObserver.observe(container);
                             });
@@ -825,7 +865,7 @@
                 characterData: false
             });
             // Re-observe existing video containers
-            const videoContainers = document.querySelectorAll('ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer');
+            const videoContainers = document.querySelectorAll(VIDEO_CONTAINER_SELECTOR);
             videoContainers.forEach(container => {
                 intersectionObserver.observe(container);
             });
@@ -966,15 +1006,12 @@
         
         // Method 1: Try new lockup view model
         if (videoElement.tagName.toLowerCase() === 'yt-lockup-view-model') {
-            const titleLink = videoElement.querySelector('.yt-lockup-metadata-view-model-wiz__title');
-            const titleSpan = titleLink?.querySelector('.yt-core-attributed-string');
-            
-            if (titleLink && titleSpan) {
-                title = titleSpan.textContent.trim();
-                // Handle both full URLs and relative URLs
-                url = titleLink.href.startsWith('http') ? 
-                    titleLink.href : 
-                    'https://www.youtube.com' + titleLink.href;
+            const titleLink = videoElement.querySelector('.yt-lockup-metadata-view-model-wiz__title, a.yt-lockup-metadata-view-model__title');
+
+            if (titleLink) {
+                const titleSpan = titleLink.querySelector('.yt-core-attributed-string');
+                title = (titleSpan?.textContent || titleLink.textContent || '').trim();
+                url = normalizeYoutubeUrl(titleLink.getAttribute('href') || titleLink.href);
             }
         }
         // Method 2: Try playlist panel renderer
@@ -984,10 +1021,7 @@
             
             if (titleSpan && linkElement) {
                 title = titleSpan.textContent.trim();
-                // Handle both full URLs and relative URLs
-                url = linkElement.href.startsWith('http') ? 
-                    linkElement.href : 
-                    'https://www.youtube.com' + linkElement.href;
+                url = normalizeYoutubeUrl(linkElement.getAttribute('href') || linkElement.href);
             }
         }
         // Method 3: Try compact video renderer
@@ -997,22 +1031,19 @@
             
             if (titleSpan && linkElement) {
                 title = titleSpan.textContent.trim();
-                // Handle both full URLs and relative URLs
-                url = linkElement.href.startsWith('http') ? 
-                    linkElement.href : 
-                    'https://www.youtube.com' + linkElement.href;
+                url = normalizeYoutubeUrl(linkElement.getAttribute('href') || linkElement.href);
             }
         }
         
         // Method 4: Standard video title link (fallback)
         if (!url || !title) {
-            const titleLink = videoElement.querySelector('a#video-title, a#video-title-link');
+            const titleLink = videoElement.querySelector('a#video-title, a#video-title-link, a.yt-lockup-metadata-view-model__title');
             if (titleLink) {
-                url = titleLink.href;
-                title = titleLink.textContent.trim();
+                url = normalizeYoutubeUrl(titleLink.getAttribute('href') || titleLink.href);
+                title = (titleLink.textContent || '').trim();
             }
         }
-        
+
         // Method 5: Try formatted string inside link (fallback)
         if (!title && url) {
             const formattedString = videoElement.querySelector('yt-formatted-string');
@@ -1026,10 +1057,22 @@
             const metadata = videoElement.data;
             if (metadata) {
                 if (!url && metadata.navigationEndpoint?.commandMetadata?.webCommandMetadata?.url) {
-                    url = 'https://www.youtube.com' + metadata.navigationEndpoint.commandMetadata.webCommandMetadata.url;
+                    url = normalizeYoutubeUrl(metadata.navigationEndpoint.commandMetadata.webCommandMetadata.url);
                 }
                 if (!title && metadata.title?.runs?.[0]?.text) {
                     title = metadata.title.runs[0].text;
+                }
+            }
+        }
+
+        // Method 7: Fallback to any watch link inside element
+        if (!url) {
+            const genericLink = videoElement.querySelector('a[href*="/watch"]');
+            if (genericLink) {
+                url = normalizeYoutubeUrl(genericLink.getAttribute('href') || genericLink.href);
+                if (!title) {
+                    const textCandidate = genericLink.querySelector('.yt-core-attributed-string');
+                    title = (textCandidate?.textContent || genericLink.textContent || '').trim();
                 }
             }
         }
