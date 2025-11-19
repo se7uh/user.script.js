@@ -17,7 +17,7 @@ A userscript that provides enhanced video playback experience on Instagram with 
 
 ## Installation
 
-Install this script from [Greasy Fork](https://greasyfork.org/en/scripts/instagram-video-controls)
+Install this script from [Greasy Fork](https://greasyfork.org/en/scripts/556248-instagram-video-controls)
 
 ## License
 
