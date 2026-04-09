@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Link Saver
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Save YouTube links with persistent storage
 // @author       se7
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=youtube.com
@@ -256,7 +256,10 @@
         a.yt-lockup-metadata-view-model__title.yt-saved-video *,
         .yt-lockup-metadata-view-model-wiz__title.yt-saved-video,
         .yt-lockup-metadata-view-model-wiz__title.yt-saved-video span.yt-core-attributed-string,
-        .yt-lockup-metadata-view-model-wiz__title.yt-saved-video * {
+        .yt-lockup-metadata-view-model-wiz__title.yt-saved-video *,
+        a.ytLockupMetadataViewModelTitle.yt-saved-video,
+        a.ytLockupMetadataViewModelTitle.yt-saved-video span.yt-core-attributed-string,
+        a.ytLockupMetadataViewModelTitle.yt-saved-video * {
             color: #2ba640 !important;
         }
 
@@ -659,7 +662,7 @@
         return `https://www.youtube.com${normalizedPath}`;
     }
 
-    const TITLE_SELECTOR = 'a#video-title, a#video-title-link, span#video-title, .yt-lockup-metadata-view-model-wiz__title, a.yt-lockup-metadata-view-model__title';
+    const TITLE_SELECTOR = 'a#video-title, a#video-title-link, span#video-title, .yt-lockup-metadata-view-model-wiz__title, a.yt-lockup-metadata-view-model__title, a.ytLockupMetadataViewModelTitle';
     const VIDEO_CONTAINER_SELECTOR = 'ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, yt-lockup-view-model';
 
     function checkAndHighlightTitles() {
