@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Link Saver
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  Save YouTube links with persistent storage
 // @author       se7
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=youtube.com
@@ -28,7 +28,6 @@
 
         #yt-link-saver > div > button {
             background: transparent;
-            color: var(--yt-spec-text-primary) !important;
             border: none;
             padding: 8px;
             cursor: pointer;
@@ -40,26 +39,27 @@
             gap: 8px;
             height: 40px;
             border-radius: 20px;
+            color: #aaa !important;
         }
 
         #yt-link-saver > div > button svg {
-            fill: currentColor;
-        }
-
-        #yt-link-saver > div > button:hover {
-            background: var(--yt-spec-badge-chip-background);
+            fill: #aaa !important;
         }
 
         #toggle-list {
             width: 40px !important;
             padding: 0 !important;
             justify-content: center;
-            color: var(--yt-spec-text-primary) !important;
+            color: #aaa !important;
+        }
+
+        #toggle-list svg {
+            fill: #aaa !important;
         }
 
         .video-count {
             background: var(--yt-spec-badge-chip-background);
-            color: var(--yt-spec-text-primary);
+            color: #aaa !important;
             padding: 2px 6px;
             border-radius: 12px;
             font-size: 12px;
@@ -68,6 +68,10 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
+        }
+
+        #yt-link-saver > div > button:hover {
+            background: var(--yt-spec-badge-chip-background);
         }
 
         #saved-links {
@@ -1109,13 +1113,14 @@
     const saveButton = document.createElement('button');
     saveButton.id = 'save-button';
     saveButton.setAttribute('aria-label', 'Save Video');
+    saveButton.style.color = '#aaa';
     
-    // Create bookmark icon using YouTube's style
+    // Create bookmark icon
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('height', '24');
     svg.setAttribute('viewBox', '0 0 24 24');
     svg.setAttribute('width', '24');
-    svg.style.fill = 'currentColor';
+    svg.style.fill = '#aaa';
     
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', 'M22 13h-4v4h-2v-4h-4v-2h4V7h2v4h4v2zm-8-6H2v1h12V7zM2 12h8v-1H2v1zm0 4h8v-1H2v1z');
@@ -1154,13 +1159,14 @@
     const toggleButton = document.createElement('button');
     toggleButton.id = 'toggle-list';
     toggleButton.setAttribute('aria-label', 'Saved Videos');
+    toggleButton.style.color = '#aaa';
     
-    // Create list icon using YouTube's style
+    // Create list icon
     const listSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     listSvg.setAttribute('height', '24');
     listSvg.setAttribute('viewBox', '0 0 24 24');
     listSvg.setAttribute('width', '24');
-    listSvg.style.fill = 'currentColor';
+    listSvg.style.fill = '#aaa';
     
     const listPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     listPath.setAttribute('d', 'M4 10h12v2H4zm0-4h12v2H4zm0 8h8v2H4zm10 0h8v2h-8zm-10 4h8v2H4zm10 0h8v2h-8z');
@@ -1176,6 +1182,7 @@
     
     const videoCount = document.createElement('span');
     videoCount.className = 'video-count';
+    videoCount.style.color = '#aaa';
     
     const linksList = document.createElement('div');
     linksList.id = 'saved-links';
